@@ -9,7 +9,14 @@ from typing import AsyncGenerator, Optional
 from dotenv import load_dotenv
 from vllm import AsyncLLMEngine
 from vllm.inputs import TextPrompt
-from vllm.entrypoints.serve.utils.request_logger import RequestLogger
+# Soft import: RequestLogger moves between vLLM versions; it's only passed as None everywhere anyway
+try:
+    from vllm.entrypoints.serve.utils.request_logger import RequestLogger
+except ImportError:
+    try:
+        from vllm.entrypoints.logger import RequestLogger
+    except ImportError:
+        RequestLogger = None
 from vllm.entrypoints.anthropic.protocol import AnthropicMessagesRequest, AnthropicMessagesResponse, AnthropicError, AnthropicErrorResponse
 from vllm.entrypoints.anthropic.serving import AnthropicServingMessages
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest

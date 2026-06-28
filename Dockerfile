@@ -8,15 +8,13 @@ RUN uv pip install --system -U \
     --index-url https://pypi.org/simple \
     --extra-index-url https://wheels.vllm.ai/nightly
 
-# 🛠 FIX: vLLM main/nightly removed vllm.entrypoints.logger module.
-# RequestLogger moved to vllm.entrypoints.serve.utils.request_logger.
-# Use patched engine.py instead of fragile sed on base image's copy.
+# 🛠 FIX: vLLM nightly moves RequestLogger between modules.
+# engine.py handles this via try/except — gracefully falls back to RequestLogger=None
+# since it's never actually used (always passed as None to serving classes).
 COPY src/engine.py /src/engine.py
 
-# 🔍 VALIDATION: verify the patched import resolves + log vLLM version
-RUN python -c "import vllm; print('vLLM version:', vllm.__version__)" \
- && python -c "from vllm.entrypoints.serve.utils.request_logger import RequestLogger; print('✓ RequestLogger import OK')" \
- && python -c "import importlib; m = importlib.import_module('vllm.entrypoints.serve.utils.request_logger'); print('✓ Module path:', m.__file__)"
+# 🔍 Log vLLM version for traceability
+RUN python -c "import vllm; print('vLLM version:', vllm.__version__)"
 
 # Environment for MiniMax-M3 NVFP4 on 2x H200/Blackwell
 ENV MODEL_NAME="/runpod-volume" \
