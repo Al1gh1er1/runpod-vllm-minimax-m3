@@ -1,48 +1,60 @@
-# Use the full CUDA devel image (same base as official RunPod vLLM worker)
-FROM nvidia/cuda:13.0.2-devel-ubuntu22.04 AS builder
+# Build stage: compile vLLM from main branch with MiniMax-M3 support
+FROM nvidia/cuda:13.0.2-devel-ubuntu22.04 AS vllm-builder
 
-# Install build dependencies
 RUN apt-get update -y && \
-    apt-get install -y python3-pip python3-dev curl git build-essential ninja-build && \
+    apt-get install -y python3-pip curl git ninja-build && \
     curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ENV PATH="/root/.local/bin:$PATH"
 RUN ldconfig /usr/local/cuda-13.0/compat/
 
-# Build vLLM from main branch (with MiniMax-M3 support)
+# Install vLLM from main branch (supports MiniMax-M3 architecture)
 RUN uv pip install --system "packaging>=24.2" && \
-    uv pip install --system "pyproject_hooks>=1.2.0" && \
-    uv pip install --system "wheel>=0.45.0" && \
     uv pip install --system \
-        "vllm @ git+https://github.com/vllm-project/vllm.git"
+        "vllm @ git+https://github.com/vllm-project/vllm.git[flashinfer]"
 
-# Install RunPod worker deps and the official image's requirements
-FROM runpod/worker-v1-vllm:v2.22.4
+# Runtime stage: RunPod worker with custom vLLM
+FROM nvidia/cuda:13.0.2-runtime-ubuntu22.04
 
-# Copy the upgraded vLLM from builder
-COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
-COPY --from=builder /usr/local/bin/vllm /usr/local/bin/vllm
+RUN apt-get update -y && \
+    apt-get install -y python3-pip curl git && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Reinstall flashinfer and DeepGEMM for compatibility
-RUN uv pip install --system "flashinfer>=0.2.1.post1" && \
-    uv pip install --system \
-        git+https://github.com/deepseek-ai/DeepGEMM.git@714dd1a4a980f7937a74343d19a8eba4fe321480 \
-        --no-build-isolation
+ENV PATH="/root/.local/bin:$PATH"
+RUN ldconfig /usr/local/cuda-13.0/compat/
 
-# Set environment variables optimized for MiniMax-M3 NVFP4
-ENV MODEL_NAME="nvidia/minimax-m3-nvfp4" \
-    BASE_PATH="/runpod-volume" \
-    TENSOR_PARALLEL_SIZE="2" \
-    GPU_MEMORY_UTILIZATION="0.90" \
-    MAX_MODEL_LEN="65536" \
-    ENFORCE_EAGER="true" \
-    DTYPE="auto" \
-    PYTORCH_ALLOC_CONF="expandable_segments:True" \
-    MAX_NUM_SEQS="256" \
-    BLOCK_SIZE="16" \
-    SWAP_SPACE="4" \
-    KV_CACHE_DTYPE="auto" \
-    RAW_OPENAI_OUTPUT="true" \
-    MAX_CONCURRENCY="30" \
-    OPENAI_RESPONSE_ROLE="assistant" \
-    TRUST_REMOTE_CODE="false"
+# Copy vLLM from builder
+COPY --from=vllm-builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=vllm-builder /usr/local/bin/vllm /usr/local/bin/vllm
+
+# Install DeepGEMM for MoE performance
+RUN uv pip install --system \
+    git+https://github.com/deepseek-ai/DeepGEMM.git@714dd1a4a980f7937a74343d19a8eba4fe321480 \
+    --no-build-isolation
+
+# Clone and install RunPod worker code
+RUN git clone https://github.com/runpod-workers/worker-vllm.git /worker-tmp && \
+    cp -r /worker-tmp/src /src && \
+    cp /worker-tmp/builder/requirements.txt /requirements.txt && \
+    rm -rf /worker-tmp
+
+RUN uv pip install --system -r /requirements.txt
+RUN chmod +x /src/start.sh
+
+# Set environment for RunPod worker
+ENV BASE_PATH="/runpod-volume" \
+    MODEL_NAME="" \
+    HF_DATASETS_CACHE="/runpod-volume/huggingface-cache/datasets" \
+    HUGGINGFACE_HUB_CACHE="/runpod-volume/huggingface-cache/hub" \
+    HF_HOME="/runpod-volume/huggingface-cache/hub" \
+    HF_HUB_ENABLE_HF_TRANSFER=0 \
+    RAY_METRICS_EXPORT_ENABLED=0 \
+    RAY_DISABLE_USAGE_STATS=1 \
+    TOKENIZERS_PARALLELISM=false \
+    RAYON_NUM_THREADS=4 \
+    VLLM_USE_DEEP_GEMM=0
+
+ENV PYTHONPATH="/:/vllm-workspace"
+
+# Default CMD
+CMD ["/bin/bash", "/src/start.sh"]
