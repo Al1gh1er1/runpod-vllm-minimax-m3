@@ -1,12 +1,12 @@
 FROM runpod/worker-v1-vllm:v2.22.4
 
 # Upgrade vLLM to nightly build (from main branch, supports MiniMax-M3)
-# vLLM 0.20.2 does not have MiniMaxM3SparseForConditionalGeneration
+# vLLM 0.20.2 does not support MiniMaxM3SparseForConditionalGeneration
+# Nightly will also upgrade flashinfer as a dependency
 RUN uv pip install --system -U \
     "vllm" --pre \
     --index-url https://pypi.org/simple \
-    --extra-index-url https://wheels.vllm.ai/nightly && \
-    uv pip install --system "flashinfer>=0.2.1.post1"
+    --extra-index-url https://wheels.vllm.ai/nightly
 
 # Environment for MiniMax-M3 NVFP4 on 2x H200/Blackwell
 ENV MODEL_NAME="/runpod-volume" \
