@@ -1,16 +1,22 @@
 FROM runpod/worker-v1-vllm:v2.22.4
 
-# Upgrade vLLM to nightly build (from main branch, supports MiniMax-M3)
-# vLLM 0.20.2 does not support MiniMaxM3SparseForConditionalGeneration
-# Nightly will also upgrade flashinfer as a dependency
+# Upgrade vLLM to latest nightly build (main branch, supports MiniMax-M3)
+# vLLM 0.20.2 does not support MiniMaxM3SparseForConditionalGeneration;
+# nightly builds from https://wheels.vllm.ai/nightly include it
 RUN uv pip install --system -U \
     "vllm" --pre \
     --index-url https://pypi.org/simple \
     --extra-index-url https://wheels.vllm.ai/nightly
 
-# 🛠 FIX: vLLM nightly removed vllm.entrypoints.logger, moved RequestLogger
-# to vllm.entrypoints.serve.utils.request_logger
-RUN sed -i 's|from vllm.entrypoints.logger import RequestLogger|from vllm.entrypoints.serve.utils.request_logger import RequestLogger|' /src/engine.py
+# 🛠 FIX: vLLM main/nightly removed vllm.entrypoints.logger module.
+# RequestLogger moved to vllm.entrypoints.serve.utils.request_logger.
+# Use patched engine.py instead of fragile sed on base image's copy.
+COPY src/engine.py /src/engine.py
+
+# 🔍 VALIDATION: verify the patched import resolves + log vLLM version
+RUN python -c "import vllm; print('vLLM version:', vllm.__version__)" \
+ && python -c "from vllm.entrypoints.serve.utils.request_logger import RequestLogger; print('✓ RequestLogger import OK')" \
+ && python -c "import importlib; m = importlib.import_module('vllm.entrypoints.serve.utils.request_logger'); print('✓ Module path:', m.__file__)"
 
 # Environment for MiniMax-M3 NVFP4 on 2x H200/Blackwell
 ENV MODEL_NAME="/runpod-volume" \
